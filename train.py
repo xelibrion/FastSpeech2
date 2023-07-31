@@ -1,5 +1,6 @@
 import argparse
 import os
+from pathlib import Path
 
 import torch
 import yaml
@@ -16,6 +17,55 @@ from dataset import Dataset
 from evaluate import evaluate
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+class ScoreTracker:
+    def __init__(
+        self, *, mode: str = "min", model: nn.Module, optimizer, ckpt_path: str
+    ):
+        assert mode in ["min", "max"]
+        self.mode = mode
+        self.best = None
+        self.model = model
+        self.optimizer = optimizer
+        self.ckpt_path = ckpt_path
+
+    def save_checkpoint(self, step: int, log_fn):
+        self.clean_up_old_checkpoints()
+
+        chkpt_path = Path(self.ckpt_path) / f"best_step={step}.pth.tar"
+        log_fn(f"Validation Step {step}: saving model to {chkpt_path} ...")
+        torch.save(
+            {
+                "model": self.model.module.state_dict(),
+                "optimizer": self.optimizer._optimizer.state_dict(),
+            },
+            chkpt_path,
+        )
+
+    def clean_up_old_checkpoints(self):
+        for chk in Path(self.ckpt_path).glob("best_step=*.pth.tar"):
+            chk.unlink()
+
+    def update(self, *, step: int, score: float, log_fn):
+        if self.best is None:
+            log_fn(f"Validation Step {step}: score {score:.4f} is the first best score")
+            self.best = score
+            self.save_checkpoint(step, log_fn)
+            return
+
+        if self.mode == "min":
+            if score < self.best:
+                log_fn(
+                    f"Validation Step {step}: score {score:.4f} is better than {self.best:.4f}"
+                )
+                self.best = score
+                self.save_checkpoint(step, log_fn)
+        else:
+            if score > self.best:
+                log_fn(f"Score {score:.4f} is better than {self.best:.4f}")
+                self.best = score
+                self.save_checkpoint(step, log_fn)
 
 
 def main(args, configs):
@@ -71,6 +121,13 @@ def main(args, configs):
     outer_bar = tqdm(total=total_step, desc="Training", position=0)
     outer_bar.n = args.restore_step
     outer_bar.update()
+
+    score_tracker = ScoreTracker(
+        mode="min",
+        model=model,
+        optimizer=optimizer,
+        ckpt_path=train_config["path"]["ckpt_path"],
+    )
 
     while True:
         inner_bar = tqdm(total=len(loader), desc="Epoch {}".format(epoch), position=1)
@@ -141,10 +198,18 @@ def main(args, configs):
 
                 if step % val_step == 0:
                     model.eval()
-                    message = evaluate(model, step, configs, val_logger, vocoder)
+                    message, losses = evaluate(
+                        model, step, configs, val_logger, vocoder
+                    )
                     with open(os.path.join(val_log_path, "log.txt"), "a") as f:
                         f.write(message + "\n")
                     outer_bar.write(message)
+
+                    score_tracker.update(
+                        step=step,
+                        score=losses["mel_loss"],
+                        log_fn=outer_bar.write,
+                    )
 
                     model.train()
 

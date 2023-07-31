@@ -83,11 +83,19 @@ def evaluate(model, step, configs, logger=None, vocoder=None):
             tag="Validation/step_{}_{}_synthesized".format(step, tag),
         )
 
-    return message
+    loss_dict = {
+        "total_loss": loss_means[0],
+        "mel_loss": loss_means[1],
+        "mel_postnet_loss": loss_means[2],
+        "pitch_loss": loss_means[3],
+        "energy_loss": loss_means[4],
+        "duration_loss": loss_means[5],
+    }
+
+    return message, loss_dict
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("--restore_step", type=int, default=30000)
     parser.add_argument(
