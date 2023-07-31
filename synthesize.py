@@ -109,9 +109,8 @@ def synthesize(model, step, configs, vocoder, batchs, control_values):
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("--restore_step", type=int, required=True)
+    parser.add_argument("--restore_step", type=str, required=True)
     parser.add_argument(
         "--mode",
         type=str,
