@@ -1,6 +1,7 @@
 import argparse
 import os
 from pathlib import Path
+import time
 
 import torch
 import yaml
@@ -87,10 +88,13 @@ def main(args, configs):
         collate_fn=dataset.collate_fn,
     )
 
+    print("Loading model...")
     # Prepare model
     model, optimizer = get_model(args, configs, device, train=True)
+    print("nn.DataParallel...")
     model = nn.DataParallel(model)
     num_param = get_param_num(model)
+    print("Init loss...")
     Loss = FastSpeech2Loss(preprocess_config, model_config).to(device)
     print("Number of FastSpeech2 Parameters:", num_param)
 
@@ -133,18 +137,39 @@ def main(args, configs):
         inner_bar = tqdm(total=len(loader), desc="Epoch {}".format(epoch), position=1)
         for batchs in loader:
             for batch in batchs:
+                st = time.time_ns()
                 batch = to_device(batch, device)
+                et = time.time_ns()
+                train_logger.add_scalar(
+                    "time_taken/move_batch:ms", (et - st) / 1000000, step
+                )
 
                 # Forward
+                st = time.time_ns()
                 output = model(*(batch[2:]))
+                et = time.time_ns()
+                train_logger.add_scalar(
+                    "time_taken/forward_pass:ms", (et - st) / 1000000, step
+                )
 
                 # Cal Loss
+                st = time.time_ns()
                 losses = Loss(batch, output)
                 total_loss = losses[0]
+                et = time.time_ns()
+                train_logger.add_scalar(
+                    "time_taken/calc_loss:ms", (et - st) / 1000000, step
+                )
 
                 # Backward
+                st = time.time_ns()
                 total_loss = total_loss / grad_acc_step
                 total_loss.backward()
+                et = time.time_ns()
+                train_logger.add_scalar(
+                    "time_taken/backward_pass:ms", (et - st) / 1000000, step
+                )
+
                 if step % grad_acc_step == 0:
                     # Clipping gradients to avoid gradient explosion
                     nn.utils.clip_grad_norm_(model.parameters(), grad_clip_thresh)
