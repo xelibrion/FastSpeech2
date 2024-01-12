@@ -1,12 +1,13 @@
 import torch
 import numpy as np
 
+DEFAULT_BATCH_SIZE = 16
+
 
 class ScheduledOptim:
-    """ A simple wrapper class for learning rate scheduling """
+    """A simple wrapper class for learning rate scheduling"""
 
     def __init__(self, model, train_config, model_config, current_step):
-
         self._optimizer = torch.optim.Adam(
             model.parameters(),
             betas=train_config["optimizer"]["betas"],
@@ -17,7 +18,17 @@ class ScheduledOptim:
         self.anneal_steps = train_config["optimizer"]["anneal_steps"]
         self.anneal_rate = train_config["optimizer"]["anneal_rate"]
         self.current_step = current_step
-        self.init_lr = np.power(model_config["transformer"]["encoder_hidden"], -0.5)
+        self.batch_scale = max(
+            1, train_config["optimizer"]["batch_size"] // DEFAULT_BATCH_SIZE
+        )
+
+        self.init_lr = (
+            np.power(model_config["transformer"]["encoder_hidden"], -0.5)
+            * self.batch_scale
+        )
+        print(
+            f"ScheduledOptim: batch_scale = {self.batch_scale}, init_lr = {self.init_lr}"
+        )
 
     def step_and_update_lr(self):
         self._update_learning_rate()
@@ -43,7 +54,7 @@ class ScheduledOptim:
         return lr
 
     def _update_learning_rate(self):
-        """ Learning rate scheduling per step """
+        """Learning rate scheduling per step"""
         self.current_step += 1
         lr = self.init_lr * self._get_lr_scale()
 
